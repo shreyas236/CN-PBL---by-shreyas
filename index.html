@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Network Simulator — DVR & Flow Control</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap');
+
+:root {
+  --bg0: #080c10;
+  --bg1: #0c1219;
+  --bg2: #101820;
+  --bg3: #141f2a;
+  --bg4: #1a2a3a;
+  --border: #1e3048;
+  --border2: #243a54;
+  --c1: #38bdf8;    /* sky blue — primary */
+  --c2: #4ade80;    /* green — success/ack */
+  --c3: #fb923c;    /* orange — warning/loss */
+  --c4: #f472b6;    /* pink — highlight */
+  --c5: #a78bfa;    /* violet */
+  --c6: #facc15;    /* yellow */
+  --txt: #b8d4ec;
+  --txt2: #5a7a9a;
+  --txt3: #3a5570;
+  --shadow: 0 4px 24px rgba(0,0,0,0.5);
+  --glow1: 0 0 16px rgba(56,189,248,0.25);
+  --glow2: 0 0 16px rgba(74,222,128,0.25);
+  --glow3: 0 0 16px rgba(251,146,60,0.25);
+  --r: 6px;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+
+body {
+  background:var(--bg0);
+  color:var(--txt);
+  font-family:'JetBrains Mono',monospace;
+  font-size:12px;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+
+/* SCAN LINES EFFECT */
+body::after{
+  content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px);
+  pointer-events:none;z-index:9999;
+}
+
+/* HEADER */
+.app-header{
+  background:var(--bg1);
+  border-bottom:1px solid var(--border);
+  padding:0 24px;
+  display:flex;align-items:center;gap:20px;
+  height:54px;
+  position:sticky;top:0;z-index:200;
+}
+.logo{
+  font-family:'Syne',sans-serif;font-weight:800;font-size:15px;
+  background:linear-gradient(135deg,var(--c1),var(--c2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  letter-spacing:1px;white-space:nowrap;
+}
+.logo-sub{font-size:9px;color:var(--txt2);letter-spacing:2px;margin-top:1px;}
+.header-divider{width:1px;height:28px;background:var(--border2);}
+.tab-nav{display:flex;gap:2px;margin-left:auto;}
+.tab-btn{
+  padding:8px 20px;background:transparent;border:1px solid transparent;
+  color:var(--txt2);font-family:'JetBrains Mono',monospace;font-size:11px;
+  letter-spacing:1px;cursor:pointer;border-radius:var(--r);transition:all .2s;
+  text-transform:uppercase;
+}
+.tab-btn:hover{color:var(--txt);border-color:var(--border2);}
+.tab-btn.active{background:rgba(56,189,248,0.1);border-color:var(--c1);color:var(--c1);}
+
+/* PAGES */
+.page{display:none;padding:16px;}
+.page.active{display:block;}
+
+/* ===== DVR PAGE ===== */
+.dvr-grid{
+  display:grid;
+  grid-template-columns:280px 1fr 340px;
+  gap:12px;
+  height:calc(100vh - 86px);
+}
+.dvr-left,.dvr-center,.dvr-right{
+  background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+
+/* PANEL HEADER */
+.ph{
+  padding:10px 14px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+  font-family:'Syne',sans-serif;font-size:11px;font-weight:700;
+  letter-spacing:2px;text-transform:uppercase;color:var(--c1);flex-shrink:0;
+}
+.ph .ph-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--c1);
+  box-shadow:0 0 8px var(--c1);animation:blink 2.4s ease-in-out infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.ph-green{color:var(--c2);}
+.ph-green .ph-dot{background:var(--c2);box-shadow:0 0 8px var(--c2);}
+.ph-orange{color:var(--c3);}
+.ph-orange .ph-dot{background:var(--c3);box-shadow:0 0 8px var(--c3);}
+
+/* SCROLLABLE BODY */
+.pb{flex:1;overflow-y:auto;padding:12px;}
+.pb::-webkit-scrollbar{width:3px;}
+.pb::-webkit-scrollbar-track{background:transparent;}
+.pb::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+/* FORMS */
+.fg{margin-bottom:14px;}
+.fl{
+  font-size:9px;letter-spacing:2px;color:var(--txt2);text-transform:uppercase;
+  margin-bottom:5px;display:block;
+}
+.fi,.fsel{
+  width:100%;padding:7px 10px;background:var(--bg0);border:1px solid var(--border2);
+  color:var(--txt);font-family:'JetBrains Mono',monospace;font-size:11px;
+  border-radius:4px;outline:none;transition:border-color .15s;
+}
+.fi:focus,.fsel:focus{border-color:var(--c1);}
+.frow{display:flex;gap:6px;}
+.frow .fi{width:auto;flex:1;}
+
+/* BUTTONS */
+.btn{
+  padding:7px 14px;border:1px solid;font-family:'JetBrains Mono',monospace;
+  font-size:10px;letter-spacing:1px;cursor:pointer;border-radius:4px;
+  transition:all .2s;text-transform:uppercase;white-space:nowrap;background:transparent;
+}
+.btn-blue{border-color:var(--c1);color:var(--c1);}
+.btn-blue:hover{background:rgba(56,189,248,0.12);box-shadow:var(--glow1);}
+.btn-green{border-color:var(--c2);color:var(--c2);}
+.btn-green:hover{background:rgba(74,222,128,0.12);box-shadow:var(--glow2);}
+.btn-orange{border-color:var(--c3);color:var(--c3);}
+.btn-orange:hover{background:rgba(251,146,60,0.12);box-shadow:var(--glow3);}
+.btn-pink{border-color:var(--c4);color:var(--c4);}
+.btn-pink:hover{background:rgba(244,114,182,0.12);}
+.btn-red{border-color:#f87171;color:#f87171;}
+.btn-red:hover{background:rgba(248,113,113,0.12);}
+.btn-sm{padding:4px 10px;font-size:9px;}
+.btn:disabled{opacity:.3;cursor:not-allowed;}
+.btn-row{display:flex;gap:6px;flex-wrap:wrap;}
+
+/* MATRIX INPUT */
+.matrix-wrap{overflow-x:auto;margin-top:6px;}
+.matrix-table{border-collapse:collapse;}
+.matrix-table th,.matrix-table td{border:1px solid var(--border2);}
+.matrix-table th{
+  padding:5px 8px;background:var(--bg3);color:var(--c1);
+  font-size:10px;text-align:center;min-width:50px;
+}
+.matrix-table td input{
+  width:52px;height:30px;text-align:center;background:var(--bg0);
+  border:none;color:var(--txt);font-family:'JetBrains Mono',monospace;font-size:11px;
+  outline:none;padding:4px;
+}
+.matrix-table td input:focus{background:rgba(56,189,248,0.05);}
+.matrix-table td.diag input{background:rgba(74,222,128,0.04);color:var(--txt2);}
+
+/* TOPOLOGY CANVAS */
+#topo-canvas{display:block;width:100%;height:100%;cursor:pointer;}
+
+/* ROUTING TABLE DISPLAY */
+.rt-node{
+  margin-bottom:12px;border:1px solid var(--border);border-radius:4px;overflow:hidden;
+}
+.rt-node-hdr{
+  padding:6px 10px;background:var(--bg3);
+  font-family:'Syne',sans-serif;font-size:10px;font-weight:700;
+  letter-spacing:2px;display:flex;align-items:center;gap:6px;
+}
+.rt-node-hdr .nd{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;}
+table.rt{width:100%;border-collapse:collapse;}
+table.rt th{background:var(--bg2);color:var(--txt2);padding:4px 8px;font-size:9px;letter-spacing:1px;text-align:left;border-bottom:1px solid var(--border);}
+table.rt td{padding:4px 8px;border-bottom:1px solid rgba(30,48,72,0.5);font-size:10px;}
+table.rt tr:last-child td{border-bottom:none;}
+table.rt td.inf{color:var(--txt3);}
+table.rt td.upd{color:var(--c2);animation:upd-flash .6s;}
+@keyframes upd-flash{0%{background:rgba(74,222,128,0.2)}100%{background:transparent}}
+
+/* LOG */
+.log{
+  background:var(--bg0);border:1px solid var(--border);border-radius:4px;
+  padding:8px;font-size:10px;overflow-y:auto;flex-shrink:0;
+}
+.log-entry{padding:2px 0;border-bottom:1px solid rgba(30,48,72,0.4);line-height:1.5;}
+.log-entry:last-child{border-bottom:none;}
+.li{color:var(--c1);}
+.lu{color:var(--c2);}
+.lw{color:var(--c3);}
+.ld{color:var(--txt2);}
+.le{color:#f87171;}
+
+/* STEP FOOTER */
+.step-footer{
+  padding:10px 12px;background:var(--bg2);border-top:1px solid var(--border);
+  display:flex;gap:6px;align-items:center;flex-shrink:0;
+}
+.iter-tag{
+  margin-left:auto;padding:4px 12px;background:rgba(167,139,250,0.1);
+  border:1px solid var(--c5);border-radius:3px;color:var(--c5);
+  font-size:10px;letter-spacing:1px;white-space:nowrap;
+}
+
+/* LINK FAILURE */
+.link-list{display:flex;flex-direction:column;gap:4px;}
+.link-item{
+  display:flex;align-items:center;gap:6px;padding:5px 8px;
+  background:var(--bg0);border:1px solid var(--border);border-radius:3px;
+  font-size:11px;
+}
+.link-item.failed{border-color:#f8717144;background:rgba(248,113,113,0.04);}
+.link-item.failed .li-label{text-decoration:line-through;color:var(--txt2);}
+.li-label{flex:1;color:var(--txt);}
+.li-cost{color:var(--c6);margin-right:4px;}
+
+/* ===== FLOW CONTROL PAGE ===== */
+.fc-grid{
+  display:grid;
+  grid-template-columns:260px 1fr 300px;
+  grid-template-rows:auto 1fr;
+  gap:12px;
+  height:calc(100vh - 86px);
+}
+.fc-config{
+  grid-column:1 / -1;
+  background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);
+  overflow:hidden;
+}
+.fc-config .pb{flex-direction:row;display:flex;gap:20px;padding:14px 16px;overflow:hidden;}
+.fc-left,.fc-center,.fc-right{
+  background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+
+/* PROTOCOL SELECTOR */
+.proto-tabs{display:flex;gap:4px;margin-bottom:12px;}
+.proto-tab{
+  flex:1;padding:8px 4px;text-align:center;cursor:pointer;
+  border:1px solid var(--border2);font-family:'JetBrains Mono',monospace;
+  font-size:10px;letter-spacing:1px;transition:all .2s;border-radius:3px;
+  text-transform:uppercase;color:var(--txt2);
+}
+.proto-tab.active{background:rgba(167,139,250,0.12);border-color:var(--c5);color:var(--c5);}
+.proto-tab:hover:not(.active){border-color:var(--border2);color:var(--txt);}
+
+/* SLIDER */
+.slider-group{display:flex;align-items:center;gap:8px;margin-top:4px;}
+input[type=range]{
+  -webkit-appearance:none;flex:1;height:3px;
+  background:var(--border2);border-radius:2px;outline:none;cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--c1);cursor:pointer;box-shadow:0 0 8px var(--c1);
+}
+.sv{color:var(--c1);font-size:12px;min-width:28px;text-align:right;}
+
+/* FRAME VISUALIZER */
+.frames-section{padding:12px;overflow-x:auto;}
+.frames-row{display:flex;gap:3px;margin-bottom:6px;min-width:max-content;}
+.frame-box{
+  width:38px;height:38px;border:1.5px solid var(--border2);border-radius:4px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10px;transition:all .3s;flex-shrink:0;position:relative;
+  cursor:default;
+}
+.frame-box.unsent{background:var(--bg3);color:var(--txt3);}
+.frame-box.in-window{background:rgba(167,139,250,0.12);border-color:var(--c5);color:var(--c5);}
+.frame-box.sent{background:rgba(56,189,248,0.1);border-color:var(--c1);color:var(--c1);}
+.frame-box.acked{background:rgba(74,222,128,0.1);border-color:var(--c2);color:var(--c2);}
+.frame-box.lost{background:rgba(251,146,60,0.12);border-color:var(--c3);color:var(--c3);}
+.frame-box.retx{background:rgba(244,114,182,0.12);border-color:var(--c4);color:var(--c4);}
+.frame-box.error-mark::after{
+  content:'✕';position:absolute;top:-5px;right:-5px;font-size:8px;
+  background:var(--c3);color:#000;border-radius:50%;width:12px;height:12px;
+  display:flex;align-items:center;justify-content:center;line-height:12px;
+}
+
+/* TRANSMISSION ANIMATION */
+.trans-arena{
+  padding:12px;background:var(--bg0);margin:0 12px;border-radius:4px;
+  border:1px solid var(--border);
+}
+.trans-row{
+  display:flex;align-items:center;gap:8px;margin-bottom:8px;
+  font-size:10px;
+}
+.trans-label{color:var(--txt2);width:70px;flex-shrink:0;}
+.trans-track{
+  flex:1;height:22px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:11px;position:relative;overflow:hidden;
+}
+.trans-packet{
+  position:absolute;top:3px;height:16px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-weight:500;transition:left 0.5s ease;
+  min-width:26px;padding:0 6px;z-index:1;
+}
+.tp-data{background:rgba(56,189,248,0.25);border:1px solid var(--c1);color:var(--c1);}
+.tp-ack{background:rgba(74,222,128,0.25);border:1px solid var(--c2);color:var(--c2);}
+.tp-lost{background:rgba(251,146,60,0.25);border:1px solid var(--c3);color:var(--c3);}
+.trans-end{color:var(--txt2);font-size:9px;width:50px;flex-shrink:0;text-align:right;}
+
+/* WINDOW POINTER */
+.win-ptr{
+  display:flex;gap:3px;min-width:max-content;margin-bottom:2px;
+}
+.win-ptr-cell{
+  width:38px;height:14px;display:flex;align-items:center;justify-content:center;
+  font-size:8px;
+}
+
+/* STATS */
+.stat-item{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:7px 0;border-bottom:1px solid var(--border);
+  font-size:11px;
+}
+.stat-item:last-child{border-bottom:none;}
+.sk{color:var(--txt2);}
+.sv-stat{font-weight:500;}
+.sv-blue{color:var(--c1);}
+.sv-green{color:var(--c2);}
+.sv-orange{color:var(--c3);}
+.sv-pink{color:var(--c4);}
+
+/* PROGRESS */
+.prog-wrap{margin-top:14px;}
+.prog-label{font-size:9px;letter-spacing:2px;color:var(--txt2);text-transform:uppercase;margin-bottom:5px;}
+.prog-bar{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;}
+.prog-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--c1),var(--c2));transition:width .4s ease;}
+.prog-txt{text-align:right;font-size:9px;color:var(--txt2);margin-top:3px;}
+
+/* FORMULA BOX */
+.formula-box{
+  background:var(--bg0);border:1px solid var(--border);border-left:3px solid var(--c1);
+  border-radius:0 4px 4px 0;padding:8px 12px;margin-top:10px;
+  font-size:11px;color:var(--c2);letter-spacing:.5px;line-height:1.8;
+}
+
+/* LEGEND */
+.legend{display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px;border-top:1px solid var(--border);}
+.legend-i{display:flex;align-items:center;gap:4px;font-size:9px;letter-spacing:.5px;}
+.legend-box{width:14px;height:14px;border-radius:2px;border:1px solid;}
+
+/* SECTION TITLE in body */
+.section-title{font-size:9px;letter-spacing:2px;color:var(--txt2);text-transform:uppercase;margin-bottom:6px;}
+
+/* TOOLTIP */
+.tooltip{
+  position:absolute;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:4px;padding:6px 10px;font-size:10px;color:var(--txt);
+  pointer-events:none;z-index:500;white-space:nowrap;
+  box-shadow:var(--shadow);display:none;
+}
+
+/* STATUS BADGE */
+.badge{
+  display:inline-block;padding:2px 8px;border-radius:3px;font-size:9px;
+  letter-spacing:1px;text-transform:uppercase;font-weight:500;
+}
+.badge-converged{background:rgba(74,222,128,0.15);color:var(--c2);border:1px solid rgba(74,222,128,0.4);}
+.badge-running{background:rgba(56,189,248,0.15);color:var(--c1);border:1px solid rgba(56,189,248,0.4);}
+.badge-idle{background:rgba(90,122,154,0.15);color:var(--txt2);border:1px solid var(--border);}
+.badge-failed{background:rgba(248,113,113,0.15);color:#f87171;border:1px solid rgba(248,113,113,0.4);}
+
+/* GRID LINES ON CANVAS BACKGROUND */
+.topo-bg{background:var(--bg1);}
+
+/* Responsive */
+@media(max-width:900px){
+  .dvr-grid,.fc-grid{grid-template-columns:1fr;grid-template-rows:auto;}
+  .fc-config .pb{flex-direction:column;}
+}
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div>
+    <div class="logo">NET·SIM</div>
+    <div class="logo-sub">Distance Vector Routing & Flow Control</div>
+  </div>
+  <div class="header-divider"></div>
+  <span style="color:var(--txt2);font-size:10px;letter-spacing:1px;">SHREYAS</span>
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchPage('dvr')">🔷 Routing Simulator</button>
+    <button class="tab-btn" onclick="switchPage('flow')">🔶 Flow Control</button>
+  </div>
+</div>
+
+<!-- ==================== DVR PAGE ==================== -->
+<div class="page active" id="page-dvr">
+<div class="dvr-grid">
+
+  <!-- LEFT PANEL -->
+  <div class="dvr-left">
+    <div class="ph"><div class="ph-dot"></div>NETWORK SETUP</div>
+    <div class="pb" style="padding:12px;">
+
+      <div class="fg">
+        <label class="fl">Number of Routers</label>
+        <div class="frow">
+          <input class="fi" type="number" id="dvr-n" min="2" max="8" value="4" style="width:80px;flex:none;">
+          <button class="btn btn-blue" onclick="dvrBuildMatrix()" style="flex:1;">Build Matrix</button>
+        </div>
+      </div>
+
+      <div class="fg" id="matrix-section" style="display:none;">
+        <label class="fl">Adjacency Matrix (9999 = no link)</label>
+        <div class="matrix-wrap">
+          <table class="matrix-table" id="adj-matrix"></table>
+        </div>
+        <div style="margin-top:8px;color:var(--txt2);font-size:9px;letter-spacing:.5px;">
+          Diagonal = 0 &nbsp;|&nbsp; Symmetric matrix
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-bottom:14px;" id="dvr-init-row" style="display:none;">
+        <button class="btn btn-green" onclick="dvrInit()" id="btn-dvr-init">▶ Initialize DVR</button>
+        <button class="btn btn-red btn-sm" onclick="dvrReset()">Reset</button>
+      </div>
+
+      <!-- LINK FAILURE -->
+      <div id="link-failure-section" style="display:none;">
+        <div class="section-title">⚠ Link Failure Control</div>
+        <div class="link-list" id="link-list"></div>
+      </div>
+
+    </div>
+    <div class="step-footer">
+      <button class="btn btn-blue btn-sm" onclick="dvrStep()" id="btn-dvr-step" disabled>Step</button>
+      <button class="btn btn-green btn-sm" onclick="dvrAutoRun()" id="btn-dvr-auto" disabled>Auto Run</button>
+      <button class="btn btn-pink btn-sm" onclick="dvrRunFull()" id="btn-dvr-full" disabled>Run All</button>
+      <div class="iter-tag" id="dvr-iter-tag">ITER: 0</div>
+    </div>
+  </div>
+
+  <!-- CENTER CANVAS -->
+  <div class="dvr-center">
+    <div class="ph ph-green"><div class="ph-dot"></div>TOPOLOGY VIEW <span id="dvr-status-badge" style="margin-left:auto;"><span class="badge badge-idle">Idle</span></span></div>
+    <div style="flex:1;position:relative;overflow:hidden;" class="topo-bg">
+      <canvas id="topo-canvas"></canvas>
+    </div>
+    <div class="legend">
+      <div class="legend-i"><div class="legend-box" style="background:rgba(56,189,248,0.15);border-color:var(--c1);"></div><span style="color:var(--txt2)">Router</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(74,222,128,0.15);border-color:var(--c2);"></div><span style="color:var(--txt2)">Updated</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(248,113,113,0.15);border-color:#f87171;"></div><span style="color:var(--txt2)">Failed Link</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(250,204,21,0.15);border-color:var(--c6);"></div><span style="color:var(--txt2)">Selected</span></div>
+      <span style="margin-left:auto;font-size:9px;color:var(--txt3)">Click router to inspect</span>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="dvr-right">
+    <div class="ph ph-orange"><div class="ph-dot"></div>ROUTING TABLES</div>
+    <div class="pb" id="rt-display" style="padding:8px;">
+      <div style="color:var(--txt3);font-size:11px;text-align:center;padding:30px 0;">Initialize DVR to view routing tables</div>
+    </div>
+    <div style="flex-shrink:0;padding:8px;border-top:1px solid var(--border);">
+      <div class="section-title">Convergence Log</div>
+      <div class="log" id="dvr-log" style="height:160px;"></div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<!-- ==================== FLOW CONTROL PAGE ==================== -->
+<div class="page" id="page-flow">
+<div class="fc-grid">
+
+  <!-- CONFIG ROW -->
+  <div class="fc-config">
+    <div class="ph"><div class="ph-dot"></div>PROTOCOL & CONFIGURATION</div>
+    <div class="pb">
+      <div style="min-width:220px;">
+        <div class="section-title">Protocol</div>
+        <div class="proto-tabs">
+          <div class="proto-tab active" id="pt-sw" onclick="fcSelectProto('SW')">Stop &amp; Wait</div>
+          <div class="proto-tab" id="pt-gbn" onclick="fcSelectProto('GBN')">Go-Back-N</div>
+          <div class="proto-tab" id="pt-sr" onclick="fcSelectProto('SR')">Sel. Repeat</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-green" onclick="fcInit()" id="fc-btn-init">▶ Initialize</button>
+          <button class="btn btn-blue" onclick="fcStep()" id="fc-btn-step" disabled>Step</button>
+          <button class="btn btn-pink" onclick="fcAutoRun()" id="fc-btn-auto" disabled>Auto Run</button>
+          <button class="btn btn-red btn-sm" onclick="fcReset()">Reset</button>
+        </div>
+      </div>
+      <div style="min-width:140px;flex:1;">
+        <label class="fl">Window Size: <span id="sv-win" style="color:var(--c1);">4</span></label>
+        <div class="slider-group">
+          <input type="range" id="sl-win" min="1" max="8" value="4" oninput="fcUpdateConfig()">
+        </div>
+      </div>
+      <div style="min-width:140px;flex:1;">
+        <label class="fl">Total Frames: <span id="sv-frames" style="color:var(--c1);">12</span></label>
+        <div class="slider-group">
+          <input type="range" id="sl-frames" min="4" max="20" value="12" oninput="fcUpdateConfig()">
+        </div>
+      </div>
+      <div style="min-width:140px;flex:1;">
+        <label class="fl">Error Rate: <span id="sv-err" style="color:var(--c3);">20%</span></label>
+        <div class="slider-group">
+          <input type="range" id="sl-err" min="0" max="60" value="20" oninput="fcUpdateConfig()">
+        </div>
+      </div>
+      <div style="min-width:140px;flex:1;">
+        <label class="fl">Speed (ms/step): <span id="sv-speed" style="color:var(--c5);">600</span></label>
+        <div class="slider-group">
+          <input type="range" id="sl-speed" min="100" max="1500" value="600" step="100" oninput="fcUpdateConfig()">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FC LEFT — Window Display -->
+  <div class="fc-left">
+    <div class="ph"><div class="ph-dot"></div>SLIDING WINDOW</div>
+    <div class="pb" id="fc-window-display" style="padding:10px;">
+      <div style="color:var(--txt3);text-align:center;padding:20px;font-size:11px;">Press Initialize to start</div>
+    </div>
+    <div class="legend">
+      <div class="legend-i"><div class="legend-box" style="background:rgba(167,139,250,0.12);border-color:var(--c5);"></div><span style="color:var(--txt2)">In Window</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(56,189,248,0.12);border-color:var(--c1);"></div><span style="color:var(--txt2)">Sent</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(74,222,128,0.1);border-color:var(--c2);"></div><span style="color:var(--txt2)">ACKed</span></div>
+      <div class="legend-i"><div class="legend-box" style="background:rgba(251,146,60,0.12);border-color:var(--c3);"></div><span style="color:var(--txt2)">Lost</span></div>
+    </div>
+  </div>
+
+  <!-- FC CENTER — Transmission -->
+  <div class="fc-center">
+    <div class="ph ph-green"><div class="ph-dot"></div>TRANSMISSION CHANNEL</div>
+    <div style="flex:1;overflow-y:auto;">
+      <div class="trans-arena" style="margin:12px;">
+        <div class="trans-row">
+          <span class="trans-label">📤 SENDER</span>
+          <div class="trans-track" id="track-data">
+            <div class="trans-packet tp-data" id="pkt-data" style="display:none;left:4px;">F0</div>
+          </div>
+          <span class="trans-end">RECEIVER 📥</span>
+        </div>
+        <div class="trans-row">
+          <span class="trans-label">📥 RECEIVER</span>
+          <div class="trans-track" id="track-ack">
+            <div class="trans-packet tp-ack" id="pkt-ack" style="display:none;left:4px;">A0</div>
+          </div>
+          <span class="trans-end">SENDER 📤</span>
+        </div>
+      </div>
+
+      <div style="padding:0 12px 8px;">
+        <div class="section-title">Receiver Buffer</div>
+        <div class="frames-row" id="rx-buffer" style="flex-wrap:wrap;gap:3px;min-width:unset;"></div>
+      </div>
+
+      <div style="padding:0 12px;">
+        <div class="section-title">Event Log</div>
+        <div class="log" id="fc-log" style="height:150px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FC RIGHT — Stats -->
+  <div class="fc-right">
+    <div class="ph ph-orange"><div class="ph-dot"></div>STATISTICS</div>
+    <div class="pb">
+      <div class="stat-item"><span class="sk">Protocol</span><span class="sv-stat sv-blue" id="st-proto">—</span></div>
+      <div class="stat-item"><span class="sk">Window Size</span><span class="sv-stat sv-blue" id="st-win">—</span></div>
+      <div class="stat-item"><span class="sk">Total Frames</span><span class="sv-stat" id="st-total">—</span></div>
+      <div class="stat-item"><span class="sk">Frames Sent</span><span class="sv-stat sv-blue" id="st-sent">0</span></div>
+      <div class="stat-item"><span class="sk">Frames ACKed</span><span class="sv-stat sv-green" id="st-acked">0</span></div>
+      <div class="stat-item"><span class="sk">Retransmissions</span><span class="sv-stat sv-orange" id="st-retx">0</span></div>
+      <div class="stat-item"><span class="sk">Errors Simulated</span><span class="sv-stat sv-orange" id="st-errs">0</span></div>
+      <div class="stat-item"><span class="sk">Throughput</span><span class="sv-stat sv-green" id="st-thru">0%</span></div>
+      <div class="stat-item"><span class="sk">Efficiency η</span><span class="sv-stat sv-pink" id="st-eff">—</span></div>
+
+      <div class="prog-wrap">
+        <div class="prog-label">Completion</div>
+        <div class="prog-bar"><div class="prog-fill" id="fc-prog-fill" style="width:0%;"></div></div>
+        <div class="prog-txt" id="fc-prog-txt">0 / 0</div>
+      </div>
+
+      <div class="formula-box" id="formula-box">
+        Stop &amp; Wait: η = 1 / (1 + 2a)
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+/* ========================================================
+   UTILITIES
+======================================================== */
+const INF = 9999;
+const NODE_COLORS = ['#38bdf8','#4ade80','#fb923c','#a78bfa','#f472b6','#facc15','#34d399','#f87171'];
+const NAMES = 'ABCDEFGH';
+
+function $(id){return document.getElementById(id);}
+function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
+
+function addLog(containerId, msg, cls='ld'){
+  const c = $(containerId);
+  const d = document.createElement('div');
+  d.className = `log-entry ${cls}`;
+  d.textContent = `[${new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}] ${msg}`;
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+}
+
+/* ========================================================
+   TAB SWITCHING
+======================================================== */
+function switchPage(p){
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active'));
+  $('page-'+p).classList.add('active');
+  const btns = document.querySelectorAll('.tab-btn');
+  if(p==='dvr') btns[0].classList.add('active');
+  else btns[1].classList.add('active');
+  if(p==='dvr'){requestAnimationFrame(()=>{ resizeCanvas(); drawTopology(); });}
+}
+
+/* ========================================================
+   DVR MODULE
+======================================================== */
+let dvrN = 4;
+let dvrDist = [];    // dist[i][j]
+let dvrNext = [];    // next hop index
+let dvrAdj = [];     // original adjacency (for reset)
+let dvrIter = 0;
+let dvrConverged = false;
+let dvrAutoInterval = null;
+let dvrUpdatedNodes = new Set();
+let dvrFailedLinks = new Set(); // "i-j" string set
+let dvrInitialized = false;
+let dvrSelectedNode = -1;
+let nodePos = [];
+
+/* Build matrix UI */
+function dvrBuildMatrix(){
+  dvrN = clamp(parseInt($('dvr-n').value)||4, 2, 8);
+  $('matrix-section').style.display='block';
+  $('dvr-init-row').style.display='flex';
+
+  const names = NAMES.slice(0,dvrN);
+  const tbl = $('adj-matrix');
+  let html = '<thead><tr><th></th>';
+  names.split('').forEach(n=>html+=`<th>${n}</th>`);
+  html+='</tr></thead><tbody>';
+
+  for(let i=0;i<dvrN;i++){
+    html+=`<tr><th>${names[i]}</th>`;
+    for(let j=0;j<dvrN;j++){
+      if(i===j){
+        html+=`<td class="diag"><input type="number" id="m${i}_${j}" value="0" readonly></td>`;
+      } else {
+        const def = (Math.abs(i-j)===1 || (i===0&&j===dvrN-1)) ? Math.floor(Math.random()*9)+1 : INF;
+        html+=`<td><input type="number" id="m${i}_${j}" value="${def}" min="0" max="9999"
+          oninput="dvrSyncMatrix(${i},${j})"></td>`;
+      }
+    }
+    html+='</tr>';
+  }
+  html+='</tbody>';
+  tbl.innerHTML=html;
+  dvrReset();
+}
+
+function dvrSyncMatrix(r,c){
+  const v = parseInt($(`m${r}_${c}`).value)||INF;
+  const inp2 = $(`m${c}_${r}`);
+  if(inp2) inp2.value = v;
+}
+
+function dvrReadAdj(){
+  const A = [];
+  for(let i=0;i<dvrN;i++){
+    A[i]=[];
+    for(let j=0;j<dvrN;j++){
+      A[i][j] = (i===j)?0:( parseInt($(`m${i}_${j}`).value)||INF );
+    }
+  }
+  return A;
+}
+
+function dvrInit(){
+  dvrAdj = dvrReadAdj();
+  dvrFailedLinks = new Set();
+  dvrDist = dvrAdj.map(r=>[...r]);
+  dvrNext = [];
+  for(let i=0;i<dvrN;i++){
+    dvrNext[i]=[];
+    for(let j=0;j<dvrN;j++){
+      dvrNext[i][j] = (dvrAdj[i][j]<INF && i!==j) ? j : (i===j?i:-1);
+    }
+  }
+  dvrIter=0; dvrConverged=false; dvrInitialized=true;
+  dvrUpdatedNodes=new Set();
+  $('dvr-iter-tag').textContent='ITER: 0';
+  $('btn-dvr-step').disabled=false;
+  $('btn-dvr-auto').disabled=false;
+  $('btn-dvr-full').disabled=false;
+  $('link-failure-section').style.display='block';
+  setDvrStatus('running');
+  buildLinkList();
+  renderRoutingTables([]);
+  $('dvr-log').innerHTML='';
+  addLog('dvr-log','DVR Initialized. Initial distance vectors loaded.','li');
+  addLog('dvr-log','All routers start with direct link costs only.','ld');
+  dvrRenderPositions();
+  drawTopology();
+}
+
+function dvrReset(){
+  clearInterval(dvrAutoInterval); dvrAutoInterval=null;
+  dvrInitialized=false; dvrConverged=false; dvrIter=0;
+  dvrDist=[]; dvrNext=[]; dvrAdj=[]; dvrFailedLinks=new Set();
+  dvrUpdatedNodes=new Set();
+  $('dvr-iter-tag').textContent='ITER: 0';
+  $('btn-dvr-step').disabled=true;
+  $('btn-dvr-auto').disabled=true;
+  $('btn-dvr-full').disabled=true;
+  $('btn-dvr-auto').textContent='Auto Run';
+  $('link-failure-section').style.display='none';
+  $('rt-display').innerHTML='<div style="color:var(--txt3);font-size:11px;text-align:center;padding:30px 0;">Initialize DVR to view routing tables</div>';
+  $('dvr-log').innerHTML='';
+  nodePos=[];
+  setDvrStatus('idle');
+  drawTopology();
+}
+
+function setDvrStatus(s){
+  const b = $('dvr-status-badge');
+  const map={idle:'badge-idle',running:'badge-running',converged:'badge-converged',failed:'badge-failed'};
+  const label={idle:'Idle',running:'Running',converged:'Converged',failed:'Link Failed'};
+  b.innerHTML=`<span class="badge ${map[s]}">${label[s]}</span>`;
+}
+
+function dvrStep(){
+  if(!dvrInitialized||dvrConverged) return;
+  let changed=false;
+  const updates=[];
+
+  for(let i=0;i<dvrN;i++){
+    for(let dest=0;dest<dvrN;dest++){
+      if(i===dest) continue;
+      for(let k=0;k<dvrN;k++){
+        const linkKey = i<k ? `${i}-${k}` : `${k}-${i}`;
+        if(dvrFailedLinks.has(linkKey)) continue;
+        const via = dvrAdj[i][k];
+        if(via>=INF) continue;
+        const newD = via + dvrDist[k][dest];
+        if(newD < dvrDist[i][dest]){
+          dvrDist[i][dest]=newD;
+          dvrNext[i][dest]=k;
+          changed=true;
+          dvrUpdatedNodes.add(i);
+          updates.push({from:NAMES[i],to:NAMES[dest],via:NAMES[k],cost:newD});
+        }
+      }
+    }
+  }
+
+  dvrIter++;
+  $('dvr-iter-tag').textContent=`ITER: ${dvrIter}`;
+
+  if(updates.length){
+    addLog('dvr-log',`Iteration ${dvrIter}: ${updates.length} table update(s)`,'li');
+    updates.forEach(u=>addLog('dvr-log',`  ${u.from}→${u.to}: cost=${u.cost}, via ${u.via}`,'lu'));
+  } else {
+    addLog('dvr-log',`Iteration ${dvrIter}: No changes. Network CONVERGED! ✓`,'lw');
+    dvrConverged=true;
+    $('btn-dvr-step').disabled=true;
+    $('btn-dvr-auto').disabled=true;
+    $('btn-dvr-full').disabled=true;
+    clearInterval(dvrAutoInterval); dvrAutoInterval=null;
+    $('btn-dvr-auto').textContent='Auto Run';
+    setDvrStatus('converged');
+  }
+
+  renderRoutingTables(updates);
+  drawTopology();
+  return changed;
+}
+
+function dvrAutoRun(){
+  if(dvrAutoInterval){
+    clearInterval(dvrAutoInterval); dvrAutoInterval=null;
+    $('btn-dvr-auto').textContent='Auto Run';
+    return;
+  }
+  $('btn-dvr-auto').textContent='⏸ Pause';
+  dvrAutoInterval = setInterval(()=>{
+    if(dvrConverged){ clearInterval(dvrAutoInterval); dvrAutoInterval=null; $('btn-dvr-auto').textContent='Auto Run'; return; }
+    dvrStep();
+  }, 700);
+}
+
+function dvrRunFull(){
+  clearInterval(dvrAutoInterval); dvrAutoInterval=null;
+  $('btn-dvr-auto').textContent='Auto Run';
+  let guard=0;
+  while(!dvrConverged && guard++<200) dvrStep();
+}
+
+/* LINK FAILURE */
+function buildLinkList(){
+  const ll = $('link-list');
+  ll.innerHTML='';
+  for(let i=0;i<dvrN;i++){
+    for(let j=i+1;j<dvrN;j++){
+      if(dvrAdj[i][j]<INF){
+        const key=`${i}-${j}`;
+        const failed=dvrFailedLinks.has(key);
+        const div=document.createElement('div');
+        div.className=`link-item${failed?' failed':''}`;
+        div.id=`li-${key}`;
+        div.innerHTML=`<span class="li-label">${NAMES[i]} ↔ ${NAMES[j]}</span>
+          <span class="li-cost">[${dvrAdj[i][j]}]</span>
+          <button class="btn btn-sm ${failed?'btn-green':'btn-red'}" onclick="toggleLink(${i},${j})">
+          ${failed?'Restore':'Fail'}</button>`;
+        ll.appendChild(div);
+      }
+    }
+  }
+}
+
+function toggleLink(i,j){
+  const key=`${i}-${j}`;
+  if(dvrFailedLinks.has(key)){
+    dvrFailedLinks.delete(key);
+    dvrAdj[i][j]=parseInt($(`m${i}_${j}`).value)||INF;
+    dvrAdj[j][i]=dvrAdj[i][j];
+    addLog('dvr-log',`Link ${NAMES[i]}-${NAMES[j]} RESTORED. Recomputing...`,'lu');
+    setDvrStatus('running');
+  } else {
+    dvrFailedLinks.add(key);
+    dvrAdj[i][j]=INF; dvrAdj[j][i]=INF;
+    addLog('dvr-log',`Link ${NAMES[i]}-${NAMES[j]} FAILED! Recomputing routes...`,'le');
+    setDvrStatus('failed');
+  }
+  // Reinitialize distances from scratch with current adj
+  const savedAdj = dvrReadAdj();
+  for(let a=0;a<dvrN;a++) for(let b=0;b<dvrN;b++){
+    const k=`${Math.min(a,b)}-${Math.max(a,b)}`;
+    if(dvrFailedLinks.has(k)){ dvrAdj[a][b]=INF; }
+    else { dvrAdj[a][b]=savedAdj[a][b]; }
+  }
+  dvrDist=dvrAdj.map(r=>[...r]);
+  dvrNext=[];
+  for(let a=0;a<dvrN;a++){
+    dvrNext[a]=[];
+    for(let b=0;b<dvrN;b++){
+      dvrNext[a][b]=(dvrAdj[a][b]<INF&&a!==b)?b:(a===b?a:-1);
+    }
+  }
+  dvrConverged=false; dvrIter=0;
+  $('dvr-iter-tag').textContent='ITER: 0';
+  $('btn-dvr-step').disabled=false;
+  $('btn-dvr-auto').disabled=false;
+  $('btn-dvr-full').disabled=false;
+  buildLinkList();
+  renderRoutingTables([]);
+  drawTopology();
+}
+
+/* RENDER ROUTING TABLES */
+function renderRoutingTables(updates){
+  const rt = $('rt-display');
+  let html='';
+  for(let i=0;i<dvrN;i++){
+    const col = NODE_COLORS[i%NODE_COLORS.length];
+    html+=`<div class="rt-node">
+      <div class="rt-node-hdr">
+        <div class="nd" style="background:${col}22;border:1px solid ${col};color:${col};">${NAMES[i]}</div>
+        Router ${NAMES[i]} Distance Vector
+      </div>
+      <table class="rt"><tr><th>Dest</th><th>Cost</th><th>Next Hop</th><th>Path</th></tr>`;
+    for(let j=0;j<dvrN;j++){
+      const cost = dvrDist[i][j];
+      const nh = dvrNext[i][j];
+      const isInf = cost>=INF;
+      const isUpd = updates.some(u=>u.from===NAMES[i]&&u.to===NAMES[j]);
+      const costStr = isInf?'∞':cost;
+      const nhStr = isInf||nh<0?'—':NAMES[nh];
+      const path = i===j ? NAMES[i] : (isInf ? '—' : buildPath(i,j));
+      html+=`<tr>
+        <td><span style="color:${NODE_COLORS[j%NODE_COLORS.length]}">${NAMES[j]}</span></td>
+        <td class="${isInf?'inf':''}${isUpd?' upd':''}">${costStr}</td>
+        <td class="${isInf?'inf':''}">${nhStr}</td>
+        <td class="inf" style="font-size:9px;">${path}</td>
+      </tr>`;
+    }
+    html+=`</table></div>`;
+  }
+  rt.innerHTML=html;
+}
+
+function buildPath(src,dst){
+  let path=NAMES[src]; let cur=src; let guard=0;
+  while(cur!==dst && guard++<20){
+    const nh=dvrNext[cur][dst];
+    if(nh<0) return '—';
+    path+='→'+NAMES[nh]; cur=nh;
+  }
+  return path;
+}
+
+/* TOPOLOGY CANVAS */
+let canvas, ctx;
+
+function resizeCanvas(){
+  canvas=$('topo-canvas');
+  const p=canvas.parentElement;
+  canvas.width=p.clientWidth;
+  canvas.height=p.clientHeight;
+}
+
+function dvrRenderPositions(){
+  const W=canvas.width, H=canvas.height;
+  const cx=W/2, cy=H/2, r=Math.min(W,H)*0.35;
+  nodePos=[];
+  for(let i=0;i<dvrN;i++){
+    const a=(2*Math.PI*i/dvrN)-Math.PI/2;
+    nodePos.push({x:cx+r*Math.cos(a),y:cy+r*Math.sin(a)});
+  }
+}
+
+function drawTopology(){
+  if(!canvas){canvas=$('topo-canvas'); if(!canvas) return;}
+  if(canvas.width===0) resizeCanvas();
+  ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+
+  // Draw subtle grid
+  ctx.strokeStyle='rgba(30,48,72,0.4)';
+  ctx.lineWidth=0.5;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  if(!dvrInitialized || nodePos.length===0){
+    ctx.fillStyle='rgba(58,85,112,0.5)';
+    ctx.font='12px JetBrains Mono';
+    ctx.textAlign='center';
+    ctx.fillText('Build matrix and initialize DVR',W/2,H/2);
+    return;
+  }
+
+  // Draw edges
+  for(let i=0;i<dvrN;i++){
+    for(let j=i+1;j<dvrN;j++){
+      const key=`${i}-${j}`;
+      const failed=dvrFailedLinks.has(key);
+      const origCost=parseInt($(`m${i}_${j}`)?.value)||INF;
+      if(origCost>=INF && !failed) continue;
+
+      const p1=nodePos[i], p2=nodePos[j];
+      if(failed){
+        ctx.setLineDash([6,4]);
+        ctx.strokeStyle='rgba(248,113,113,0.4)';
+        ctx.lineWidth=1;
+      } else {
+        ctx.setLineDash([]);
+        ctx.strokeStyle='rgba(56,189,248,0.3)';
+        ctx.lineWidth=1.5;
+      }
+      ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Cost badge
+      const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+      if(!failed){
+        ctx.fillStyle='#0c1219';
+        roundRect(ctx, mx-14, my-9, 28, 18, 3);
+        ctx.fill();
+        ctx.strokeStyle='rgba(56,189,248,0.5)'; ctx.lineWidth=1;
+        roundRect(ctx, mx-14, my-9, 28, 18, 3);
+        ctx.stroke();
+        ctx.fillStyle='#38bdf8'; ctx.font='9px JetBrains Mono';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(origCost, mx, my);
+      } else {
+        ctx.fillStyle='rgba(248,113,113,0.8)'; ctx.font='10px monospace';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('✕', mx, my);
+      }
+    }
+  }
+
+  // Draw nodes
+  for(let i=0;i<dvrN;i++){
+    const p=nodePos[i];
+    const col=NODE_COLORS[i%NODE_COLORS.length];
+    const isUpdated=dvrUpdatedNodes.has(i);
+    const isSelected=dvrSelectedNode===i;
+    const R=22;
+
+    // Outer glow
+    const grad=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,R+10);
+    grad.addColorStop(0,col+'44');
+    grad.addColorStop(1,'transparent');
+    ctx.beginPath(); ctx.arc(p.x,p.y,R+10,0,Math.PI*2);
+    ctx.fillStyle=grad; ctx.fill();
+
+    // Circle
+    ctx.beginPath(); ctx.arc(p.x,p.y,R,0,Math.PI*2);
+    ctx.fillStyle='#0c1219'; ctx.fill();
+    ctx.strokeStyle = isSelected ? '#facc15' : (isUpdated ? '#4ade80' : col);
+    ctx.lineWidth = isSelected ? 3 : 2;
+    ctx.stroke();
+
+    // Label
+    ctx.fillStyle = isSelected ? '#facc15' : col;
+    ctx.font='bold 14px Syne,sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(NAMES[i], p.x, p.y);
+  }
+}
+
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+window.addEventListener('load',()=>{
+  canvas=$('topo-canvas');
+  resizeCanvas();
+  canvas.addEventListener('click', onCanvasClick);
+  drawTopology();
+  fcUpdateConfig();
+  dvrBuildMatrix();
+  setTimeout(()=>{ dvrInit(); drawTopology(); },100);
+});
+
+window.addEventListener('resize',()=>{ resizeCanvas(); if(dvrInitialized) dvrRenderPositions(); drawTopology(); });
+
+function onCanvasClick(e){
+  if(!dvrInitialized) return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+  const my=(e.clientY-rect.top)*(canvas.height/rect.height);
+  let found=-1;
+  nodePos.forEach((p,i)=>{
+    if(Math.hypot(mx-p.x,my-p.y)<26) found=i;
+  });
+  dvrSelectedNode=found;
+  if(found>=0){
+    addLog('dvr-log',`Node ${NAMES[found]} selected. Distances: ${NAMES.slice(0,dvrN).split('').map((n,j)=>`→${n}:${dvrDist[found][j]>=INF?'∞':dvrDist[found][j]}`).join(' ')}`,'li');
+  }
+  drawTopology();
+}
+
+
+/* ========================================================
+   FLOW CONTROL MODULE
+======================================================== */
+let fcProto = 'SW';
+let fcWin = 4;
+let fcTotal = 12;
+let fcErrRate = 0.20;
+let fcSpeed = 600;
+let fcState = null;
+let fcAutoInt = null;
+
+function fcUpdateConfig(){
+  fcWin = parseInt($('sl-win').value);
+  fcTotal = parseInt($('sl-frames').value);
+  fcErrRate = parseInt($('sl-err').value)/100;
+  fcSpeed = parseInt($('sl-speed').value);
+  $('sv-win').textContent=fcWin;
+  $('sv-frames').textContent=fcTotal;
+  $('sv-err').textContent=(fcErrRate*100).toFixed(0)+'%';
+  $('sv-speed').textContent=fcSpeed;
+  updateFormulaBox();
+}
+
+function fcSelectProto(p){
+  fcProto=p;
+  ['SW','GBN','SR'].forEach(x=>{
+    const el=$(`pt-${x.toLowerCase()}`);
+    if(el) el.classList.toggle('active', x===p);
+  });
+  // Fix IDs: pt-sw, pt-gbn, pt-sr
+  document.querySelectorAll('.proto-tab').forEach(el=>el.classList.remove('active'));
+  const map={SW:'pt-sw',GBN:'pt-gbn',SR:'pt-sr'};
+  $(map[p]).classList.add('active');
+  updateFormulaBox();
+}
+
+function updateFormulaBox(){
+  const fb=$('formula-box');
+  const W = fcProto==='SW'?1:fcWin;
+  if(fcProto==='SW') fb.innerHTML='Stop &amp; Wait:<br>η = 1 / (1 + 2a)<br><span style="color:var(--txt2);font-size:9px;">where a = T_p / T_t (propagation/transmission ratio)</span>';
+  else if(fcProto==='GBN') fb.innerHTML=`Go-Back-N:<br>η = W / (1 + 2a) = <span style="color:var(--c1)">${W}</span> / (1 + 2a)<br><span style="color:var(--txt2);font-size:9px;">Max window: W ≤ 2ⁿ − 1</span>`;
+  else fb.innerHTML=`Selective Repeat:<br>η = W / (1 + 2a) = <span style="color:var(--c1)">${W}</span> / (1 + 2a)<br><span style="color:var(--txt2);font-size:9px;">Max window: W ≤ 2ⁿ⁻¹</span>`;
+}
+
+function fcInit(){
+  clearInterval(fcAutoInt); fcAutoInt=null;
+  $('fc-btn-auto').textContent='Auto Run';
+  fcUpdateConfig();
+
+  const W = fcProto==='SW' ? 1 : fcWin;
+  fcState = {
+    proto: fcProto,
+    W,
+    total: fcTotal,
+    base: 0,
+    next: 0,
+    frameStatus: new Array(fcTotal).fill('unsent'), // unsent/in-window/sent/acked/lost/retx
+    rxBuf: new Array(fcTotal).fill(false),
+    stats:{ sent:0, acked:0, retx:0, errs:0 },
+    done: false,
+    step: 0
+  };
+
+  $('fc-btn-step').disabled=false;
+  $('fc-btn-auto').disabled=false;
+  $('st-proto').textContent=fcProto;
+  $('st-win').textContent=W;
+  $('st-total').textContent=fcTotal;
+  $('fc-log').innerHTML='';
+  addLog('fc-log',`Protocol: ${fcProto} | Window: ${W} | Frames: ${fcTotal} | Error: ${(fcErrRate*100).toFixed(0)}%`,'li');
+  renderFC();
+  updateFCStats();
+}
+
+function fcStep(){
+  if(!fcState || fcState.done) return;
+  const s = fcState;
+  const W = s.W;
+
+  // Slide window: mark frames in window
+  for(let i=0;i<s.total;i++){
+    if(s.frameStatus[i]==='unsent' && i>=s.base && i<s.base+W){
+      s.frameStatus[i]='in-window';
+    }
+  }
+
+  // Send frames in window that aren't sent/acked yet
+  let sentAny=false;
+  for(let i=s.next; i<s.total && i<s.base+W; i++){
+    if(s.frameStatus[i]==='in-window' || s.frameStatus[i]==='unsent'){
+      const errored = Math.random()<fcErrRate;
+      if(errored){
+        s.frameStatus[i]='lost';
+        s.stats.sent++; s.stats.errs++;
+        addLog('fc-log',`Frame ${i}: LOST (transmission error)`,'lw');
+        animatePacket('data',`F${i}`,true);
+      } else {
+        s.frameStatus[i]='sent';
+        s.stats.sent++;
+        addLog('fc-log',`Frame ${i}: sent successfully`,'ld');
+        animatePacket('data',`F${i}`,false);
+        sentAny=true;
+      }
+      s.next = Math.max(s.next, i+1);
+      break; // one frame per step for visibility
+    }
+  }
+
+  // Process ACKs / retransmissions
+  if(!sentAny){
+    if(s.proto==='SW'){
+      if(s.frameStatus[s.base]==='lost'){
+        addLog('fc-log',`Frame ${s.base}: timeout, retransmitting`,'lw');
+        s.frameStatus[s.base]='retx';
+        s.stats.sent++; s.stats.retx++;
+        s.next=s.base;
+        setTimeout(()=>{
+          if(fcState) fcState.frameStatus[fcState.base]='sent';
+          renderFC();
+        },200);
+      } else if(s.frameStatus[s.base]==='sent'){
+        s.frameStatus[s.base]='acked';
+        s.rxBuf[s.base]=true;
+        s.stats.acked++;
+        addLog('fc-log',`ACK received for frame ${s.base}`,'lu');
+        animatePacket('ack',`A${s.base}`,false);
+        s.base++;
+        s.next=Math.max(s.next,s.base);
+      }
+    } else if(s.proto==='GBN'){
+      // Find first lost/unacked in window
+      let lostIdx=-1;
+      for(let i=s.base;i<Math.min(s.base+W, s.total);i++){
+        if(s.frameStatus[i]==='lost'){ lostIdx=i; break; }
+      }
+      if(lostIdx>=0){
+        addLog('fc-log',`GBN: Frame ${lostIdx} lost, retransmitting from ${lostIdx}`,'lw');
+        s.stats.retx += s.next - lostIdx;
+        for(let i=lostIdx; i<s.next; i++){
+          if(s.frameStatus[i]!=='acked') s.frameStatus[i]='retx';
+        }
+        s.next=lostIdx;
+        setTimeout(()=>{
+          if(!fcState) return;
+          for(let i=lostIdx;i<Math.min(lostIdx+W, fcState.total);i++){
+            if(fcState.frameStatus[i]==='retx') fcState.frameStatus[i]='in-window';
+          }
+          renderFC();
+        },300);
+      } else if(s.frameStatus[s.base]==='sent'){
+        // Cumulative ACK
+        s.frameStatus[s.base]='acked';
+        s.rxBuf[s.base]=true;
+        s.stats.acked++;
+        addLog('fc-log',`Cumulative ACK: frame ${s.base} acknowledged`,'lu');
+        animatePacket('ack',`A${s.base}`,false);
+        s.base++;
+      }
+    } else { // SR
+      // ACK individual frames
+      for(let i=s.base; i<Math.min(s.base+W, s.next); i++){
+        if(s.frameStatus[i]==='lost'){
+          addLog('fc-log',`SR: Retransmitting only frame ${i}`,'lw');
+          s.stats.sent++; s.stats.retx++;
+          s.frameStatus[i]='in-window';
+          animatePacket('data',`RF${i}`,true);
+          break;
+        } else if(s.frameStatus[i]==='sent'){
+          s.frameStatus[i]='acked';
+          s.rxBuf[i]=true;
+          s.stats.acked++;
+          addLog('fc-log',`ACK for frame ${i} (selective)`,'lu');
+          animatePacket('ack',`A${i}`,false);
+          break;
+        }
+      }
+      // Advance base
+      while(s.base<s.total && s.rxBuf[s.base]) s.base++;
+    }
+  }
+
+  // Check done
+  if(s.stats.acked>=s.total){
+    s.done=true;
+    addLog('fc-log','✓ All frames acknowledged! Transmission complete.','lu');
+    $('fc-btn-step').disabled=true;
+    $('fc-btn-auto').disabled=true;
+    clearInterval(fcAutoInt); fcAutoInt=null;
+    $('fc-btn-auto').textContent='Auto Run';
+  }
+
+  s.step++;
+  renderFC();
+  updateFCStats();
+}
+
+function fcAutoRun(){
+  if(fcAutoInt){ clearInterval(fcAutoInt); fcAutoInt=null; $('fc-btn-auto').textContent='Auto Run'; return; }
+  $('fc-btn-auto').textContent='⏸ Pause';
+  fcAutoInt=setInterval(()=>{
+    if(!fcState||fcState.done){ clearInterval(fcAutoInt); fcAutoInt=null; $('fc-btn-auto').textContent='Auto Run'; return; }
+    fcStep();
+  }, fcSpeed);
+}
+
+function fcReset(){
+  clearInterval(fcAutoInt); fcAutoInt=null;
+  fcState=null;
+  $('fc-btn-step').disabled=true;
+  $('fc-btn-auto').disabled=true;
+  $('fc-btn-auto').textContent='Auto Run';
+  $('fc-window-display').innerHTML='<div style="color:var(--txt3);text-align:center;padding:20px;font-size:11px;">Press Initialize to start</div>';
+  $('rx-buffer').innerHTML='';
+  $('fc-log').innerHTML='';
+  ['st-sent','st-acked','st-retx','st-errs'].forEach(id=>$(id).textContent='0');
+  $('st-thru').textContent='0%'; $('st-eff').textContent='—';
+  $('fc-prog-fill').style.width='0%'; $('fc-prog-txt').textContent='0 / 0';
+  hidePkts();
+}
+
+function renderFC(){
+  if(!fcState) return;
+  const s=fcState;
+  const W=s.W;
+
+  // Window display
+  let html='<div class="section-title">Sender Frame Buffer</div>';
+  html+='<div class="win-ptr">';
+  for(let i=0;i<s.total;i++){
+    const inWin = i>=s.base && i<s.base+W;
+    html+=`<div class="win-ptr-cell" style="color:${inWin?'var(--c5)':'var(--txt3)'};">${inWin?'▼':''}</div>`;
+  }
+  html+='</div>';
+  html+='<div class="frames-row">';
+  for(let i=0;i<s.total;i++){
+    const st=s.frameStatus[i];
+    const errMark = st==='lost'?' error-mark':'';
+    html+=`<div class="frame-box ${st}${errMark}" title="Frame ${i}: ${st}">${i}</div>`;
+  }
+  html+='</div>';
+  html+=`<div style="margin-top:6px;font-size:9px;color:var(--txt2);letter-spacing:1px;">
+    BASE: <span style="color:var(--c5)">${s.base}</span> &nbsp;|&nbsp;
+    NEXT SEQ: <span style="color:var(--c1)">${s.next}</span> &nbsp;|&nbsp;
+    WINDOW END: <span style="color:var(--c5)">${s.base+W-1}</span>
+  </div>`;
+  $('fc-window-display').innerHTML=html;
+
+  // RX Buffer
+  let rxHtml='';
+  for(let i=0;i<s.total;i++){
+    const acked=s.rxBuf[i];
+    rxHtml+=`<div class="frame-box ${acked?'acked':'unsent'}">${i}</div>`;
+  }
+  $('rx-buffer').innerHTML=rxHtml;
+}
+
+function updateFCStats(){
+  if(!fcState) return;
+  const s=fcState;
+  $('st-sent').textContent=s.stats.sent;
+  $('st-acked').textContent=s.stats.acked;
+  $('st-retx').textContent=s.stats.retx;
+  $('st-errs').textContent=s.stats.errs;
+  const thru = s.total>0 ? ((s.stats.acked/s.total)*100).toFixed(1)+'%' : '0%';
+  $('st-thru').textContent=thru;
+  const eff = s.stats.sent>0 ? ((s.stats.acked/s.stats.sent)*100).toFixed(1)+'%' : '—';
+  $('st-eff').textContent=eff;
+  const pct = s.total>0 ? (s.stats.acked/s.total)*100 : 0;
+  $('fc-prog-fill').style.width=pct+'%';
+  $('fc-prog-txt').textContent=`${s.stats.acked} / ${s.total}`;
+}
+
+/* Packet animation */
+let pktDataTimer=null, pktAckTimer=null;
+
+function animatePacket(type, label, lost){
+  const id = type==='data'?'pkt-data':'pkt-ack';
+  const el=$(id);
+  el.textContent=label;
+  el.className=`trans-packet ${type==='data'?(lost?'tp-lost':'tp-data'):'tp-ack'}`;
+  el.style.display='flex';
+  // Direction: data goes left→right, ack goes right→left
+  if(type==='data'){
+    el.style.left='2%';
+    el.style.transition='none';
+    requestAnimationFrame(()=>{
+      el.style.transition='left 0.45s ease';
+      el.style.left=lost?'55%':'88%';
+    });
+  } else {
+    el.style.left='88%';
+    el.style.transition='none';
+    requestAnimationFrame(()=>{
+      el.style.transition='left 0.45s ease';
+      el.style.left='2%';
+    });
+  }
+  clearTimeout(type==='data'?pktDataTimer:pktAckTimer);
+  const t=setTimeout(()=>el.style.display='none', 600);
+  if(type==='data') pktDataTimer=t; else pktAckTimer=t;
+}
+
+function hidePkts(){
+  ['pkt-data','pkt-ack'].forEach(id=>{const e=$(id);if(e)e.style.display='none';});
+}
+</script>
+</body>
+</html>
